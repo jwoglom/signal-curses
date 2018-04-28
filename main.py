@@ -1,4 +1,5 @@
 import npyscreen
+from datetime import datetime
 
 class MainForm(npyscreen.Popup):
 	def create(self):
@@ -15,6 +16,7 @@ class MainForm(npyscreen.Popup):
 class MessagesLine(npyscreen.MultiLine):
 	_size = 15
 	_size_max = 30
+	_date_size = 20
 	_real_values = []
 	def __init__(self, *args, **kwargs):
 		#kwargs['columns'] = 6
@@ -28,7 +30,7 @@ class MessagesLine(npyscreen.MultiLine):
 		super(MessagesLine, self).update(*args, **kwargs)
 
 	def _gen_size(self):
-		self._size = min(max([len(i[0]) for i in self._real_values]), self._size_max)
+		self._size = min(max([len(i[1]) for i in self._real_values]), self._size_max)
 
 	def display_value(self, val):
 		return val
@@ -40,15 +42,19 @@ class MessagesLine(npyscreen.MultiLine):
 		return val[:size_max-len(c)]+c
 
 	def _gen_lines(self, val):
-		return self._gen_lines_full(val, self._size, self._size_max)
+		return self._gen_lines_full(val, self._size, self._size_max, self._date_size)
 
-	def _gen_lines_full(self, val, size, size_max):
-		beg_fmt = '{:>'+str(size)+'} | '
-		first_beg = beg_fmt.format(self._gen_line_max(val[0], size_max))
-		cont_beg = beg_fmt.format('')
+	def _gen_lines_full(self, val, size, size_max, date_size):
+		beg_fmt = '{:<'+str(date_size)+'}{:>'+str(size)+'}'
+		if len(val) > 2:
+			beg_fmt += ' | '
+		first_beg = beg_fmt.format(val[0], self._gen_line_max(val[1], size_max))
+		cont_beg = beg_fmt.format(val[0], '')
 		ret = []
-		text = val[1]
-		
+		if len(val) < 3:
+			return [first_beg]
+
+		text = val[2]
 		ret.append(first_beg + str(text[:self.width]))
 		text = text[self.width:]
 		while len(text) > 0:
@@ -61,8 +67,14 @@ class MessagesLine(npyscreen.MultiLine):
 		for v in self._real_values:
 			[self.values.append(i) for i in self._gen_lines(v)]
 
+	def _time_now(self):
+		return str(datetime.now())[:19]
+
 	def addValues(self, values):
-		self._real_values += values
+		for val in values:
+			comb = [self._time_now()] + list(val)
+			self._real_values += [comb]
+		
 		self.update()
 
 
@@ -99,12 +111,8 @@ class AppForm(npyscreen.FormMuttActiveTraditionalWithMenus):
 	def beforeEditing(self):
 		self.wMain.always_show_cursor = False
 		self.wMain.addValues([
-			('John Smith', 'great weather huh? how are you doing'),
-			('Jane', 'foobarfoobar asdf asdf asdf asdf asdf asdf asdf '),
-			('Almosttoolong butnottoolong a', 'test foo'),
-			('Longlonglong Tootoolonglonglong', 'test blah'),
-			('John Smith', 'too long '*30),
-			('After', 'after text')])
+			('*', 'Connecting...',),
+		])
 		self.wMain.display()
 
 		self._updateTitle('Andrew Wang')
