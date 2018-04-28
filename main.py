@@ -15,34 +15,57 @@ class MainForm(npyscreen.Popup):
 class MessagesLine(npyscreen.MultiLine):
 	_size = 15
 	_size_max = 30
+	_real_values = None
 	def __init__(self, *args, **kwargs):
 		#kwargs['columns'] = 6
 		#kwargs['column_width'] = 20
 		super(MessagesLine, self).__init__(*args, **kwargs)
 
 	def update(self, *args, **kwargs):
-		self._gen_size()
+		if self.values:
+			if not self._real_values:
+				self._real_values = self.values
+			self._gen_size()
+			self._gen_values()
 		super(MessagesLine, self).update(*args, **kwargs)
 
 	def _gen_size(self):
-		self._size = min(max([len(i[0]) for i in self.values]), self._size_max)
+		self._size = min(max([len(i[0]) for i in self._real_values]), self._size_max)
 
 	def display_value(self, val):
-		return self._gen_line(val, self._size, self._size_max)
+		return val
+		#return self._gen_line(val, self._size, self._size_max)
 
 
 	def _gen_line_max(self, val, size_max):
 		if len(val) < size_max:
 			return val
-		return val[:size_max-3]+'...'
+		c = '…'
+		return val[:size_max-len(c)]+c
 
-	def _gen_line(self, val, size, size_max):
-		fmt = '{:>'+str(size)+'} | {}'
-		out = fmt.format(self._gen_line_max(val[0], size_max), val[1])
-		#out = str(self.width)+' '+str(len(out))+' '+out
+
+	def _gen_lines(self, val):
+		return self._gen_lines_full(val, self._size, self._size_max)
+
+	def _gen_lines_full(self, val, size, size_max):
+		beg_fmt = '{:>'+str(size)+'} | '
+		first_beg = beg_fmt.format(self._gen_line_max(val[0], size_max))
+		cont_beg = beg_fmt.format('')
+		ret = []
+		text = val[1]
 		
+		ret.append(first_beg + str(text[:self.width]))
+		text = text[self.width:]
+		while len(text) > 0:
+			ret.append(cont_beg + str(text[:self.width]))
+			text = text[self.width:]
+		return ret
 
-		return out
+	def _gen_values(self):
+		self.values = []
+		for v in self._real_values:
+			[self.values.append(i) for i in self._gen_lines(v)]
+
 
 
 class AppForm(npyscreen.FormMuttActiveTraditionalWithMenus):
