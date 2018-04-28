@@ -15,16 +15,14 @@ class MainForm(npyscreen.Popup):
 class MessagesLine(npyscreen.MultiLine):
 	_size = 15
 	_size_max = 30
-	_real_values = None
+	_real_values = []
 	def __init__(self, *args, **kwargs):
 		#kwargs['columns'] = 6
 		#kwargs['column_width'] = 20
 		super(MessagesLine, self).__init__(*args, **kwargs)
 
 	def update(self, *args, **kwargs):
-		if self.values:
-			if not self._real_values:
-				self._real_values = self.values
+		if self._real_values:
 			self._gen_size()
 			self._gen_values()
 		super(MessagesLine, self).update(*args, **kwargs)
@@ -34,15 +32,12 @@ class MessagesLine(npyscreen.MultiLine):
 
 	def display_value(self, val):
 		return val
-		#return self._gen_line(val, self._size, self._size_max)
-
 
 	def _gen_line_max(self, val, size_max):
 		if len(val) < size_max:
 			return val
 		c = '…'
 		return val[:size_max-len(c)]+c
-
 
 	def _gen_lines(self, val):
 		return self._gen_lines_full(val, self._size, self._size_max)
@@ -66,15 +61,12 @@ class MessagesLine(npyscreen.MultiLine):
 		for v in self._real_values:
 			[self.values.append(i) for i in self._gen_lines(v)]
 
+	def addValues(self, values):
+		self._real_values += values
+		self.update()
 
 
 class AppForm(npyscreen.FormMuttActiveTraditionalWithMenus):
-	"""def create(self):
-		self.wStatus1 = self.add(npyscreen.TitleText, name='status1')
-		self.wStatus2 = self.add(npyscreen.TitleText, name='status2')
-		self.wCommand = self.add(npyscreen.TitleText, name='command')
-		self.wMain = self.add(npyscreen.TitleText, name='main')"""
-
 	COMMAND_WIDGET_CLASS = npyscreen.TitleText
 	COMMAND_WIDGET_NAME = 'Send: '
 	COMMAND_WIDGET_BEGIN_ENTRY_AT = 1
@@ -83,15 +75,21 @@ class AppForm(npyscreen.FormMuttActiveTraditionalWithMenus):
 	def create(self):
 		self.m1 = self.add_menu(name="Main Menu", shortcut="^X")
 		self.m1.addItemsFromList([
-			("Display Text", self.whenDisplayText, None, None, ("some text",)),
+			("Add Lines", self.whenAddLines, None, None, ("blah",)),
+			("Switch", self.whenSwitch, None, None, ("blah",)),
 			("Exit", self.whenExit, "e"),
 		])
 
 		super(AppForm, self).create()
 
 
-	def whenDisplayText(self, arg):
-		npyscreen.notify_confirm(arg)
+	def whenAddLines(self, arg):
+		self.wMain.addValues([
+		('John Doe', 'text '*10),
+		('Bob Smith', 'text '*50),])
+
+	def whenSwitch(self, arg):
+		self._updateTitle('John Smith')
 
 	def whenExit(self):
 		self.parentApp.setNextForm(None)
@@ -100,20 +98,22 @@ class AppForm(npyscreen.FormMuttActiveTraditionalWithMenus):
 
 	def beforeEditing(self):
 		self.wMain.always_show_cursor = False
-		self.wMain.values = [
+		self.wMain.addValues([
 			('John Smith', 'great weather huh? how are you doing'),
 			('Jane', 'foobarfoobar asdf asdf asdf asdf asdf asdf asdf '),
 			('Almosttoolong butnottoolong a', 'test foo'),
 			('Longlonglong Tootoolonglonglong', 'test blah'),
 			('John Smith', 'too long '*30),
-			('After', 'after text')]
+			('After', 'after text')])
 		self.wMain.display()
 
-		self.wStatus1.value = 'Title'
-		self.wStatus2.value = 'Title2'
+		self._updateTitle('Andrew Wang')
 
-		self.wCommand.name = 'command:'
-		self.wCommand.display()
+	def _updateTitle(self, name):
+		self.wStatus1.value = 'Signal: {} '.format(name)
+		self.wStatus2.value = '{} '.format(name)
+		self.wStatus1.display()
+		self.wStatus2.display()
 
 class SignalApp(npyscreen.NPSAppManaged):
 	def onStart(self):
