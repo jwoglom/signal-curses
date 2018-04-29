@@ -6,6 +6,8 @@ import re
 from contextlib import redirect_stdout
 from datetime import datetime
 
+CURSES_OTHER_ENTER = 10
+
 log_file = open('sc.log', 'w')
 log_file_lock = threading.Lock()
 def log(*args):
@@ -105,12 +107,22 @@ class MessagesLine(npyscreen.MultiLine):
 		#self.update()
 
 class AppMessageBox(npyscreen.TitleText):
-	def set_up_handlers(self):
-		super(AppMessageBox, self).set_up_handlers()
-		self.handlers[curses.KEY_ENTER] = self._handleEnter
+	def __init__(self, *args, **kwargs):
+		super(AppMessageBox, self).__init__(*args, **kwargs)
+		self.entry_widget.add_handlers({
+			'^A': self._handleEnter,
+			curses.KEY_ENTER: self._handleEnter,
+			CURSES_OTHER_ENTER: self._handleEnter
+		})
 
 	def _handleEnter(self, inp):
-		log('handleEnter', inp)
+		val = self.entry_widget.value
+		log('handleEnter', inp, val)
+		self.parent.wMain.addValues([
+			('ENTER', val)])
+		self.parent.parentApp.queue_event(npyscreen.Event("SEND"))
+		self.parent.parentApp.queue_event(npyscreen.Event("RELOAD"))
+
 
 
 class AppForm(npyscreen.FormMuttActiveTraditionalWithMenus):
