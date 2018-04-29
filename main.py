@@ -2,6 +2,7 @@ import npyscreen
 import curses
 import subprocess
 import threading
+import re
 from contextlib import redirect_stdout
 from datetime import datetime
 
@@ -98,6 +99,9 @@ class MessagesLine(npyscreen.MultiLine):
 			comb = [self._time_now()] + list(val)
 			self._real_values += [comb]
 
+	def addDatedValues(self, values):
+		self._real_values += values
+
 		#self.update()
 
 class AppMessageBox(npyscreen.TitleText):
@@ -127,7 +131,7 @@ class AppForm(npyscreen.FormMuttActiveTraditionalWithMenus):
 		super(AppForm, self).create()
 
 	def reloadHandler(self, event):
-		log('reloadHandler')
+		#log('reloadHandler')
 		self.wMain.update()
 
 	def whenAddLines(self, arg):
@@ -161,12 +165,15 @@ class AppForm(npyscreen.FormMuttActiveTraditionalWithMenus):
 class SignalApp(npyscreen.StandardApp):
 	app = None
 	daemonThread = None
+	lines = []
+	lineState = None
 	def onStart(self):
 		#self.addForm('MAIN', MainForm, name='Enter Message')
 		self.addForm('MAIN', AppForm, name='Application')
 		log('start forms', self._Forms)
 		self.app = self.getForm('MAIN')
 
+		self.lineState = LineState()
 		self.initDaemon()
 
 	def onInMainLoop(self):
@@ -176,6 +183,66 @@ class SignalApp(npyscreen.StandardApp):
 		log('main', self.app)
 		self.daemonThread = SignalDaemonThread(self.app)
 		self.daemonThread.start()
+
+	def handleLine(self, line):
+		self.lines.append(line)
+		log('handleLine', line)
+		regexes = {
+			'init': r'Envelope from: \“([\w\d\s]*)\” (\+\d+) \(device: (\d+)\)',
+			'timestamp': r'Timestamp: (\d+) \((.*)\)',
+			'msgTimestamp': r'Message timestamp: (\d+) \((.*)\)',
+			'body': r'Body: (.*)'
+		}
+
+
+		for typ in regexes.keys():
+			regex = regexes[typ] 
+			res = re.search(regex, line)
+			match = res.groups() if res else None
+			if not match:
+				continue
+			log(typ, 'matches', match)
+
+			if typ == 'init':
+				self.lineState.fromName = match[0]
+				self.lineState.fromNumber = match[1]
+			elif typ == 'timestamp':
+				self.lineState.timestamp = match[0]
+			elif typ == 'messageTimestamp':
+				self.lineState.msgTimestamp = match[0]
+			elif typ == 'body':
+				self.lineState.messageBody = match[0]
+
+			log('lineState', self.lineState)
+			if self.lineState.is_ready():
+				self.app.wMain.addDatedValues([
+					self.lineState.gen_line()
+				])
+				self.lineState = LineState()
+
+		#self.app.wMain.addValues([('*', line)])
+
+class LineState(object):
+	fromName = None
+	fromNumber = None
+	timestamp = None
+	msgTimestamp = None
+	messageBody = None
+
+	def is_ready(self):
+		return self.fromNumber and self.timestamp and self.messageBody
+
+	def format_ts(self):
+		return str(datetime.fromtimestamp(int(self.timestamp)/1000))[:19]
+
+	def gen_line(self):
+		if self.fromName:
+			return (self.format_ts(), '{} ({})'.format(self.fromName, self.fromNumber), self.messageBody)
+		return (self.format_ts(), '{}'.format(self.fromNumber), self.messageBody)
+
+	def __str__(self):
+		return "name: {} num: {} ts: {} body: {}".format(
+			self.fromName, self.fromNumber, self.timestamp, self.messageBody)
 
 
 class SignalDaemonThread(threading.Thread):
@@ -190,8 +257,8 @@ class SignalDaemonThread(threading.Thread):
 		#script = ["dbus-launch", "signal-cli", "-u '***REMOVED***'", "daemon"]
 		script = ['python3', 'sp.py']
 		for line in execute(script):
-			log('queue event')
-			self.app.wMain.addValues([('*', line)])
+			#log('queue event')
+			self.app.parentApp.handleLine(line)
 			self.app.parentApp.queue_event(npyscreen.Event("RELOAD"))
 
 		log('daemon exit')
