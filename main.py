@@ -1,15 +1,19 @@
 import npyscreen
 import curses
 import subprocess
+import threading
 from contextlib import redirect_stdout
 from datetime import datetime
 
 log_file = open('sc.log', 'w')
+log_file_lock = threading.Lock()
 def log(*args):
+	log_file_lock.acquire()
 	log_file.write(str(datetime.now())[:19]+' ')
 	log_file.write(' '.join([str(i) for i in args]))
 	log_file.write('\n')
 	log_file.flush()
+	log_file_lock.release()
 
 def execute(cmd):
     popen = subprocess.Popen(cmd, stdout=subprocess.PIPE, universal_newlines=True)
@@ -93,9 +97,8 @@ class MessagesLine(npyscreen.MultiLine):
 		for val in values:
 			comb = [self._time_now()] + list(val)
 			self._real_values += [comb]
-		
-		self.update()
 
+		#self.update()
 
 class AppMessageBox(npyscreen.TitleText):
 	def set_up_handlers(self):
@@ -120,15 +123,18 @@ class AppForm(npyscreen.FormMuttActiveTraditionalWithMenus):
 			("Exit", self.whenExit, "e"),
 		])
 
+		self.add_event_hander("RELOAD", self.reloadHandler)
 		super(AppForm, self).create()
 
+	def reloadHandler(self, event):
+		log('reloadHandler')
+		self.wMain.update()
 
 	def whenAddLines(self, arg):
 		self.wMain.addValues([
 		('John Doe', 'text '*10),
 		('Bob Smith', 'text '*50),])
 		
-
 	def whenSwitch(self, arg):
 		self._updateTitle('John Smith')
 
@@ -152,25 +158,43 @@ class AppForm(npyscreen.FormMuttActiveTraditionalWithMenus):
 		self.wStatus1.display()
 		self.wStatus2.display()
 
-class SignalApp(npyscreen.NPSAppManaged):
+class SignalApp(npyscreen.StandardApp):
 	app = None
+	daemonThread = None
 	def onStart(self):
 		#self.addForm('MAIN', MainForm, name='Enter Message')
 		self.addForm('MAIN', AppForm, name='Application')
 		log('start forms', self._Forms)
 		self.app = self.getForm('MAIN')
+
 		self.initDaemon()
 
 	def onInMainLoop(self):
 		log('mloop forms', self._Forms)
 		
-
 	def initDaemon(self):
 		log('main', self.app)
+		self.daemonThread = SignalDaemonThread(self.app)
+		self.daemonThread.start()
+
+
+class SignalDaemonThread(threading.Thread):
+	app = None
+	daemon = False
+	def __init__(self, app):
+		super(SignalDaemonThread, self).__init__()
+		self.app = app
+
+	def run(self):
+		log('daemon thread')
 		#script = ["dbus-launch", "signal-cli", "-u '***REMOVED***'", "daemon"]
 		script = ['python3', 'sp.py']
 		for line in execute(script):
+			log('queue event')
 			self.app.wMain.addValues([('*', line)])
+			self.app.parentApp.queue_event(npyscreen.Event("RELOAD"))
+
+		log('daemon exit')
 
 
 
