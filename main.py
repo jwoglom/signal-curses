@@ -5,6 +5,7 @@ import threading
 import re
 import pathlib
 import json
+import os
 from queue import Queue
 from datetime import datetime
 
@@ -21,14 +22,17 @@ def log(*args):
     log_file.flush()
     log_file_lock.release()
 
-def execute(cmd):
-    popen = subprocess.Popen(cmd, stdout=subprocess.PIPE, universal_newlines=True)
+def execute_popen(cmd):
+    return subprocess.Popen(cmd, stdout=subprocess.PIPE,
+        universal_newlines=True, preexec_fn=os.setsid)
+
+def execute(popen):
     for stdout_line in iter(popen.stdout.readline, ""):
         yield stdout_line 
     popen.stdout.close()
     return_code = popen.wait()
     if return_code:
-        raise subprocess.CalledProcessError(return_code, cmd)
+        raise subprocess.CalledProcessError(return_code, None)
 
 class MainForm(npyscreen.Popup):
     def create(self):
@@ -104,6 +108,9 @@ class MessagesLine(npyscreen.MultiLine):
             comb = [self._time_now()] + list(val)
             self._real_values += [comb]
 
+    def clearValues(self):
+        self._real_values = []
+
     def addDatedValues(self, values):
         self._real_values += values
 
@@ -136,7 +143,6 @@ class AppForm(npyscreen.FormMuttActiveTraditionalWithMenus):
     def create(self):
         self.m1 = self.add_menu(name="Main Menu", shortcut="^X")
         self.m1.addItemsFromList([
-            ("Add Lines", self.whenAddLines, None, None, ("blah",)),
             ("Switch", self.whenSwitch, None, None, ("blah",)),
             ("Exit", self.whenExit, "e"),
         ])
@@ -161,18 +167,16 @@ class AppForm(npyscreen.FormMuttActiveTraditionalWithMenus):
             'state': self.parentApp.state,
             'message': val
         })
-
-    def whenAddLines(self, arg):
-        self.wMain.addValues([
-        ('John Doe', 'text '*10),
-        ('Bob Smith', 'text '*50),])
         
     def whenSwitch(self, arg):
-        self._updateTitle('John Smith')
+        self.parentApp.setNextForm('MAIN')
+        self.parentApp.state.clear()
+        self.parentApp.switchFormNow()
 
     def whenExit(self):
         self.parentApp.setNextForm(None)
         self.editing = False
+        self.parentApp.handleExit()
         self.parentApp.switchFormNow()
         exit(0)
 
@@ -195,6 +199,7 @@ class AppForm(npyscreen.FormMuttActiveTraditionalWithMenus):
 
 class SelectFormTree(npyscreen.MLTree):
     pass
+
 
 class SelectForm(npyscreen.Form):
     tree = None
@@ -276,7 +281,7 @@ class AppState(object):
     def groupId(self):
         return self.group['groupId'] if self.is_group else None
 
-    def loadState(self, selected, is_group):
+    def load(self, selected, is_group):
         if is_group:
             self.convType = self.GROUP
             self.group = selected
@@ -284,11 +289,16 @@ class AppState(object):
             self.convType = self.USER
             self.user = selected
 
+    def clear(self):
+        self.convType = None
+        self.user = None
+        self.group = None
 
 
 class SignalApp(npyscreen.StandardApp):
     app = None
     daemonThread = None
+    daemonPopen = None
     messageThread = None
     message_queue = Queue()
     lines = []
@@ -312,14 +322,12 @@ class SignalApp(npyscreen.StandardApp):
         self.initDaemon()
 
     def updateState(self, selected, is_group):
-        self.state.loadState(selected, is_group)
+        self.state.load(selected, is_group)
         log('new state:', self.state)
         self.app.updateState()
 
-
     def onInMainLoop(self):
         log('mloop forms', self._Forms)
-
         
     def initDaemon(self):
         log('main', self.app)
@@ -328,6 +336,18 @@ class SignalApp(npyscreen.StandardApp):
 
         self.messageThread = SignalMessageThread(self.app, self.message_queue)
         self.messageThread.start()
+
+    def killMessageThread(self):
+        self.message_queue.put({
+            'exit': 1
+        })
+
+    def killDaemon(self):
+        self.daemonPopen.kill()
+
+    def handleExit(self):
+        self.killMessageThread()
+        self.killDaemon()
 
     def handleDaemonLine(self, line):
         self.lines.append(line)
@@ -414,11 +434,15 @@ class SignalDaemonThread(threading.Thread):
         log('daemon thread')
         script = ['signal-cli', '-u', SELF_PHONE, 'daemon']
         #script = ['python3', 'sp.py']
-        for line in execute(script):
-            #log('queue event')
-            self.app.parentApp.handleDaemonLine(line)
-            self.app.parentApp.queue_event(npyscreen.Event("RELOAD"))
-
+        try:
+            popen = execute_popen(script)
+            self.app.parentApp.daemonPopen = popen
+            for line in execute(popen):
+                #log('queue event')
+                self.app.parentApp.handleDaemonLine(line)
+                self.app.parentApp.queue_event(npyscreen.Event("RELOAD"))
+        except subprocess.CalledProcessError as e:
+            pass
         log('daemon exit')
 
 class SignalMessageThread(threading.Thread):
@@ -435,6 +459,8 @@ class SignalMessageThread(threading.Thread):
         while True:
             item = self.queue.get()
             log('queue item', item)
+            if 'exit' in item:
+                break
             self.do_action(**item)
             self.queue.task_done()
         log('message thread exit')
@@ -445,6 +471,7 @@ class SignalMessageThread(threading.Thread):
     def send_message(self, number, message):
         log('send_message', number, message)
         script = ['signal-cli', '--dbus', 'send', str(number), '-m', message]
+        popen = execute_popen(script)
         for line in execute(script):
             #log('queue event')
             self.app.parentApp.handleMessageLine(line)
@@ -466,7 +493,6 @@ class SignalConfigData(object):
     @property
     def contacts(self):
         return self.data['contactStore']['contacts']
-
 
 
 if __name__ == '__main__':
