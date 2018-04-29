@@ -3,6 +3,8 @@ import curses
 import subprocess
 import threading
 import re
+import pathlib
+import json
 from queue import Queue
 from datetime import datetime
 
@@ -208,6 +210,9 @@ class SignalApp(npyscreen.StandardApp):
 	lines = []
 	messageLines = []
 	lineState = None
+
+	configData = None
+
 	def onStart(self):
 		#self.addForm('MAIN', MainForm, name='Enter Message')
 		self.addForm('MAIN', AppForm, name='Application')
@@ -216,6 +221,9 @@ class SignalApp(npyscreen.StandardApp):
 
 		self.lineState = LineState()
 		self.initDaemon()
+
+		self.configData = SignalConfigData(SELF_PHONE)
+		log('contacts: ', len(self.configData.contacts))
 
 	def onInMainLoop(self):
 		log('mloop forms', self._Forms)
@@ -350,6 +358,23 @@ class SignalMessageThread(threading.Thread):
 			self.app.parentApp.queue_event(npyscreen.Event("RELOAD"))
 
 		log('send_message done')
+
+class SignalConfigData(object):
+	data = None
+	def __init__(self, phone):
+		f = open('{}/.config/signal/data/{}'.format(pathlib.Path.home(), phone), 'r')
+		self.data = json.loads(f.read())
+		f.close()
+
+	@property
+	def groups(self):
+		return self.data['groupStore']['groups']
+
+	@property
+	def contacts(self):
+		return self.data['contactStore']['contacts']
+
+
 
 if __name__ == '__main__':
 	signal = SignalApp()
