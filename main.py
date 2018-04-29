@@ -1,5 +1,24 @@
 import npyscreen
+import curses
+import subprocess
+from contextlib import redirect_stdout
 from datetime import datetime
+
+log_file = open('sc.log', 'w')
+def log(*args):
+	log_file.write(str(datetime.now())[:19]+' ')
+	log_file.write(' '.join([str(i) for i in args]))
+	log_file.write('\n')
+	log_file.flush()
+
+def execute(cmd):
+    popen = subprocess.Popen(cmd, stdout=subprocess.PIPE, universal_newlines=True)
+    for stdout_line in iter(popen.stdout.readline, ""):
+        yield stdout_line 
+    popen.stdout.close()
+    return_code = popen.wait()
+    if return_code:
+        raise subprocess.CalledProcessError(return_code, cmd)
 
 class MainForm(npyscreen.Popup):
 	def create(self):
@@ -78,8 +97,17 @@ class MessagesLine(npyscreen.MultiLine):
 		self.update()
 
 
+class AppMessageBox(npyscreen.TitleText):
+	def set_up_handlers(self):
+		super(AppMessageBox, self).set_up_handlers()
+		self.handlers[curses.KEY_ENTER] = self._handleEnter
+
+	def _handleEnter(self, inp):
+		log('handleEnter', inp)
+
+
 class AppForm(npyscreen.FormMuttActiveTraditionalWithMenus):
-	COMMAND_WIDGET_CLASS = npyscreen.TitleText
+	COMMAND_WIDGET_CLASS = AppMessageBox
 	COMMAND_WIDGET_NAME = 'Send: '
 	COMMAND_WIDGET_BEGIN_ENTRY_AT = 1
 	MAIN_WIDGET_CLASS = MessagesLine
@@ -99,6 +127,7 @@ class AppForm(npyscreen.FormMuttActiveTraditionalWithMenus):
 		self.wMain.addValues([
 		('John Doe', 'text '*10),
 		('Bob Smith', 'text '*50),])
+		
 
 	def whenSwitch(self, arg):
 		self._updateTitle('John Smith')
@@ -111,11 +140,11 @@ class AppForm(npyscreen.FormMuttActiveTraditionalWithMenus):
 	def beforeEditing(self):
 		self.wMain.always_show_cursor = False
 		self.wMain.addValues([
-			('*', 'Connecting...',),
+		#	('*', 'Connecting...',),
 		])
 		self.wMain.display()
 
-		self._updateTitle('Andrew Wang')
+		self._updateTitle('John Doe')
 
 	def _updateTitle(self, name):
 		self.wStatus1.value = 'Signal: {} '.format(name)
@@ -124,9 +153,25 @@ class AppForm(npyscreen.FormMuttActiveTraditionalWithMenus):
 		self.wStatus2.display()
 
 class SignalApp(npyscreen.NPSAppManaged):
+	app = None
 	def onStart(self):
 		#self.addForm('MAIN', MainForm, name='Enter Message')
 		self.addForm('MAIN', AppForm, name='Application')
+		log('start forms', self._Forms)
+		self.app = self.getForm('MAIN')
+		self.initDaemon()
+
+	def onInMainLoop(self):
+		log('mloop forms', self._Forms)
+		
+
+	def initDaemon(self):
+		log('main', self.app)
+		#script = ["dbus-launch", "signal-cli", "-u '***REMOVED***'", "daemon"]
+		script = ['python3', 'sp.py']
+		for line in execute(script):
+			self.app.wMain.addValues([('*', line)])
+
 
 
 if __name__ == '__main__':
