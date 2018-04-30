@@ -17,6 +17,9 @@ from secret import SELF_PHONE, TO_PHONE
 
 log_file = open('sc.log', 'w')
 log_file_lock = threading.Lock()
+
+out_file = open('daemon.log', 'a')
+out_file_lock = threading.Lock()
 def log(*args):
     log_file_lock.acquire()
     log_file.write(str(datetime.now())[:19]+' ')
@@ -533,6 +536,11 @@ class SignalDaemonThread(threading.Thread):
             self.app.daemonPopen = popen
             for line in execute(popen):
                 #log('queue event')
+                out_file_lock.acquire()
+                out_file.write(line)
+                out_file.flush()
+                out_file_lock.release()
+
                 self.app.handleDaemonLine(line)
                 self.app.queue_event(npyscreen.Event("RELOAD"))
         except subprocess.CalledProcessError as e:
