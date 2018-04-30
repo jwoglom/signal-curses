@@ -316,6 +316,9 @@ class AppState(object):
 
         return lineState.fromNumber == self.toNumber
 
+    def shouldNotifyLine(self, lineState):
+        return lineState.fromNumber != self.phone
+
 class SignalApp(npyscreen.StandardApp):
     app = None
     daemonThread = None
@@ -458,8 +461,15 @@ class SignalApp(npyscreen.StandardApp):
 
             if self.state.shouldDisplayLine(self.lineState):
                 self.app.addLine(self.lineState)
+            elif self.state.shouldNotifyLine(self.lineState):
+                log('notifying line')
+                gen_line = self.lineState.gen_line()
+                txt = '{}:\n\n{}'.format(gen_line[0], gen_line[2])
+                if self.lineState.hasGroupInfo:
+                    txt = 'Group: {}\n'.format(self.lineState.groupName) + txt
+                npyscreen.notify_wait(txt, title='New Message from {}'.format(gen_line[1]))
             else:
-                log('not displaying line')
+                log('not displaying or notifying')
 
             self.lineState = LineState()
 
