@@ -460,7 +460,7 @@ class SignalApp(npyscreen.StandardApp):
             self.lines.append(self.lineState)
 
             if self.state.shouldDisplayLine(self.lineState):
-                self.app.addLine(self.lineState)
+                self.addLine(self.lineState)
             elif self.state.shouldNotifyLine(self.lineState):
                 log('notifying line')
                 gen_line = self.lineState.gen_line()
@@ -526,7 +526,7 @@ class SignalDaemonThread(threading.Thread):
     def run(self):
         log('daemon thread')
         state = self.app.state
-        script = ['signal-cli', '-u', state.number, 'daemon']
+        script = ['signal-cli', '-u', state.phone, 'daemon']
         #script = ['python3', 'sp.py']
         try:
             popen = execute_popen(script)
