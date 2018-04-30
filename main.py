@@ -6,6 +6,9 @@ import re
 import pathlib
 import json
 import os
+import argparse
+from signal import signal as py_signal
+from signal import SIGINT
 from queue import Queue
 from datetime import datetime
 
@@ -24,11 +27,11 @@ def log(*args):
 
 def execute_popen(cmd):
     return subprocess.Popen(cmd, stdout=subprocess.PIPE,
-        universal_newlines=True, preexec_fn=os.setsid)
+        universal_newlines=True)
 
 def execute(popen):
     for stdout_line in iter(popen.stdout.readline, ""):
-        yield stdout_line 
+        yield stdout_line
     popen.stdout.close()
     return_code = popen.wait()
     if return_code:
@@ -110,6 +113,7 @@ class MessagesLine(npyscreen.MultiLine):
 
     def clearValues(self):
         self._real_values = []
+        self.values = []
 
     def addDatedValues(self, values):
         self._real_values += values
@@ -125,11 +129,14 @@ class AppMessageBox(npyscreen.TitleText):
             CURSES_OTHER_ENTER: self._handleEnter
         })
 
+    def _getSelfName(self):
+        return '{}'.format(self.parent.parentApp.state.phone)
+
     def _handleEnter(self, inp):
         val = self.entry_widget.value
         log('handleEnter', inp, val)
         self.parent.wMain.addValues([
-            ('ENTER', val)])
+            (self._getSelfName(), val)])
         self.parent.parentApp.queue_event(npyscreen.Event("SEND"))
         self.parent.parentApp.queue_event(npyscreen.Event("RELOAD"))
 
@@ -188,8 +195,8 @@ class AppForm(npyscreen.FormMuttActiveTraditionalWithMenus):
         self.wMain.display()
 
     def _updateTitle(self, name, numbers):
-        self.wStatus1.value = 'Signal: {} '.format(name)
-        self.wStatus2.value = '{} ({}) '.format(name, ', '.join(numbers))
+        self.wStatus1.value = 'Signal: {} '.format(name if name else ', '.join(numbers))
+        self.wStatus2.value = '{} ({}) '.format(name, ', '.join(numbers)) if name else ', '.join(numbers)+' '
         self.wStatus1.display()
         self.wStatus2.display()
 
@@ -237,6 +244,8 @@ class SelectForm(npyscreen.Form):
             npyscreen.notify_confirm('Invalid entry', title='Select User/Group')
             return
 
+        self.parentApp.app.wMain.clearValues()
+        self.parentApp.app.wMain.update()
         self.parentApp.updateState(selected, is_group)
         self.parentApp.setNextForm('APP')
 
@@ -248,6 +257,9 @@ class AppState(object):
 
     user = None
     group = None
+
+    configDir = None
+    phone = None
 
     def __str__(self):
         return 'state type: {} name: {} numbers: {}'.format(self.convType, self.toName, ', '.join(self.numbers))
@@ -294,6 +306,10 @@ class AppState(object):
         self.user = None
         self.group = None
 
+    def loadArgs(self, args):
+        self.phone = args.phone
+        self.configDir = args.configDir
+
 
 class SignalApp(npyscreen.StandardApp):
     app = None
@@ -305,13 +321,21 @@ class SignalApp(npyscreen.StandardApp):
     messageLines = []
     lineState = None
     state = None
+    isShuttingDown = False
 
     configData = None
 
-    def onStart(self):
-        self.configData = SignalConfigData(SELF_PHONE)
-        log('contacts: ', len(self.configData.contacts))
+    def __init__(self, options=None, *args, **kwargs):
+        super(SignalApp, self).__init__(*args, **kwargs)
+
         self.state = AppState()
+        self.state.loadArgs(options)
+        self.configData = SignalConfigData(self.state)
+
+        self.initDaemon()
+
+    def onStart(self):
+        log('contacts: ', len(self.configData.contacts))
 
         self.addForm('MAIN', SelectForm, name='Select User/Group')
         self.addForm('APP', AppForm, name='Application')
@@ -319,7 +343,6 @@ class SignalApp(npyscreen.StandardApp):
         self.app = self.getForm('APP')
 
         self.lineState = LineState()
-        self.initDaemon()
 
     def updateState(self, selected, is_group):
         self.state.load(selected, is_group)
@@ -344,10 +367,17 @@ class SignalApp(npyscreen.StandardApp):
 
     def killDaemon(self):
         self.daemonPopen.kill()
+        self.daemonPopen.terminate()
 
     def handleExit(self):
+        self.isShuttingDown = True
         self.killMessageThread()
         self.killDaemon()
+
+    def sigint_handler(self, sig, frame):
+        log('SIGINT')
+        self.handleExit()
+        exit(0)
 
     def handleDaemonLine(self, line):
         self.lines.append(line)
@@ -442,7 +472,8 @@ class SignalDaemonThread(threading.Thread):
                 self.app.parentApp.handleDaemonLine(line)
                 self.app.parentApp.queue_event(npyscreen.Event("RELOAD"))
         except subprocess.CalledProcessError as e:
-            pass
+            if not self.app.parentApp.isShuttingDown:
+                raise e
         log('daemon exit')
 
 class SignalMessageThread(threading.Thread):
@@ -472,7 +503,7 @@ class SignalMessageThread(threading.Thread):
         log('send_message', number, message)
         script = ['signal-cli', '--dbus', 'send', str(number), '-m', message]
         popen = execute_popen(script)
-        for line in execute(script):
+        for line in execute(popen):
             #log('queue event')
             self.app.parentApp.handleMessageLine(line)
             self.app.parentApp.queue_event(npyscreen.Event("RELOAD"))
@@ -481,8 +512,8 @@ class SignalMessageThread(threading.Thread):
 
 class SignalConfigData(object):
     data = None
-    def __init__(self, phone):
-        f = open('{}/.config/signal/data/{}'.format(pathlib.Path.home(), phone), 'r')
+    def __init__(self, state):
+        f = open('{}/data/{}'.format(state.configDir, state.phone), 'r')
         self.data = json.loads(f.read())
         f.close()
 
@@ -496,7 +527,15 @@ class SignalConfigData(object):
 
 
 if __name__ == '__main__':
-    signal = SignalApp()
+    parser = argparse.ArgumentParser(description='Curses interface for Signal')
+    parser.add_argument('-u', dest='phone', help='Your phone number', required=True)
+    parser.add_argument('-c', dest='configDir', help='Config folder', default='{}/.config/signal'.format(pathlib.Path.home()))
+
+    args = parser.parse_args()
+    log('args', args)
+
+    signal = SignalApp(options=args)
+    py_signal(SIGINT, signal.sigint_handler)
     signal.run()
 
     #print(npyscreen.wrapper_basic(formFunc))
