@@ -310,6 +310,11 @@ class AppState(object):
         self.phone = args.phone
         self.configDir = args.configDir
 
+    def shouldDisplayLine(self, lineState):
+        if lineState.hasGroupInfo and lineState.groupId == self.groupId:
+            return True
+
+        return lineState.fromNumber == self.toNumber
 
 class SignalApp(npyscreen.StandardApp):
     app = None
@@ -317,11 +322,12 @@ class SignalApp(npyscreen.StandardApp):
     daemonPopen = None
     messageThread = None
     message_queue = Queue()
-    lines = []
+    raw_lines = []
     messageLines = []
     lineState = None
     state = None
     isShuttingDown = False
+    lines = []
 
     configData = None
 
@@ -347,17 +353,31 @@ class SignalApp(npyscreen.StandardApp):
     def updateState(self, selected, is_group):
         self.state.load(selected, is_group)
         log('new state:', self.state)
+
+        self.loadDisplayLines()
         self.app.updateState()
+
+    def loadDisplayLines(self):
+        for line in self.lines:
+            if self.state.shouldDisplayLine(line):
+                self.addLine(line)
+
+
+    def addLine(self, lineState):
+        gen_line = lineState.gen_line()
+        self.app.wMain.addDatedValues([
+            gen_line
+        ])
 
     def onInMainLoop(self):
         log('mloop forms', self._Forms)
         
     def initDaemon(self):
         log('main', self.app)
-        self.daemonThread = SignalDaemonThread(self.app)
+        self.daemonThread = SignalDaemonThread(self)
         self.daemonThread.start()
 
-        self.messageThread = SignalMessageThread(self.app, self.message_queue)
+        self.messageThread = SignalMessageThread(self, self.message_queue)
         self.messageThread.start()
 
     def killMessageThread(self):
@@ -380,14 +400,18 @@ class SignalApp(npyscreen.StandardApp):
         exit(0)
 
     def handleDaemonLine(self, line):
-        self.lines.append(line)
+        self.raw_lines.append(line)
         log('handleDaemonLine', line)
         regexes = {
             'init': r'Envelope from: \“([\w\d\s]*)\” (\+\d+) \(device: (\d+)\)',
             'timestamp': r'Timestamp: (\d+) \((.*)\)',
             'msgTimestamp': r'Message timestamp: (\d+) \((.*)\)',
             'toLine': r'To: \“([\w\d\s]*)\” (\+\d+) , Message timestamp: (\d+) \((.*)\)',
-            'body': r'Body: (.*)'
+            'body': r'Body: (.*)',
+            'groupInfo': r'(Group info:)',
+            'groupId': r'  Id: (.*)',
+            'groupName': r'  Name: (.*)',
+            'groupType': r'  Type: (.*)'
         }
 
 
@@ -412,13 +436,32 @@ class SignalApp(npyscreen.StandardApp):
                 self.lineState.msgTimestamp = match[2]
             elif typ == 'body':
                 self.lineState.messageBody = match[0]
+            elif typ == 'groupInfo':
+                self.lineState.hasGroupInfo = True
+            elif typ == 'groupId':
+                self.lineState.groupId = match[0]
+            elif typ == 'groupName':
+                self.lineState.groupName = match[0]
+            elif typ == 'groupType':
+                self.lineState.groupType = match[0]
+            log('re-loop')
 
-            log('lineState', self.lineState)
-            if self.lineState.is_ready():
-                self.app.wMain.addDatedValues([
-                    self.lineState.gen_line()
-                ])
-                self.lineState = LineState()
+        log('lineState', self.lineState)
+        if self.lineState.is_ready_ws():
+            log('lineStateReadyWs len', len(line))
+            if len(line) < 2:
+                self.lineState.hasWhitespaceLine = True
+
+        if self.lineState.is_ready():
+            log('lineStateReady')
+            self.lines.append(self.lineState)
+
+            if self.state.shouldDisplayLine(self.lineState):
+                self.app.addLine(self.lineState)
+            else:
+                log('not displaying line')
+
+            self.lineState = LineState()
 
         #self.app.wMain.addValues([('*', line)])
 
@@ -437,8 +480,18 @@ class LineState(object):
     msgTimestamp = None
     messageBody = None
 
-    def is_ready(self):
+    hasWhitespaceLine = None
+
+    hasGroupInfo = None
+    groupId = None
+    groupName = None
+    groupType = None
+
+    def is_ready_ws(self):
         return self.fromNumber and self.timestamp and self.messageBody
+
+    def is_ready(self):
+        return self.is_ready_ws() and self.hasWhitespaceLine
 
     def format_ts(self):
         return str(datetime.fromtimestamp(int(self.timestamp)/1000))[:19]
@@ -462,18 +515,18 @@ class SignalDaemonThread(threading.Thread):
 
     def run(self):
         log('daemon thread')
-        state = self.app.parentApp.state
+        state = self.app.state
         script = ['signal-cli', '-u', state.number, 'daemon']
         #script = ['python3', 'sp.py']
         try:
             popen = execute_popen(script)
-            self.app.parentApp.daemonPopen = popen
+            self.app.daemonPopen = popen
             for line in execute(popen):
                 #log('queue event')
-                self.app.parentApp.handleDaemonLine(line)
-                self.app.parentApp.queue_event(npyscreen.Event("RELOAD"))
+                self.app.handleDaemonLine(line)
+                self.app.queue_event(npyscreen.Event("RELOAD"))
         except subprocess.CalledProcessError as e:
-            if not self.app.parentApp.isShuttingDown:
+            if not self.app.isShuttingDown:
                 raise e
         log('daemon exit')
 
@@ -514,8 +567,8 @@ class SignalMessageThread(threading.Thread):
         popen = execute_popen(script)
         for line in execute(popen):
             #log('queue event')
-            self.app.parentApp.handleMessageLine(line)
-            self.app.parentApp.queue_event(npyscreen.Event("RELOAD"))
+            self.app.handleMessageLine(line)
+            self.app.queue_event(npyscreen.Event("RELOAD"))
 
         log('send_message done')
 
