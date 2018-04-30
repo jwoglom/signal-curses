@@ -462,7 +462,8 @@ class SignalDaemonThread(threading.Thread):
 
     def run(self):
         log('daemon thread')
-        script = ['signal-cli', '-u', SELF_PHONE, 'daemon']
+        state = self.app.parentApp.state
+        script = ['signal-cli', '-u', state.number, 'daemon']
         #script = ['python3', 'sp.py']
         try:
             popen = execute_popen(script)
@@ -497,11 +498,19 @@ class SignalMessageThread(threading.Thread):
         log('message thread exit')
 
     def do_action(self, state=None, message=None):
-        self.send_message(state.toNumber, message)
+        self.send_message(state, message)
 
-    def send_message(self, number, message):
-        log('send_message', number, message)
-        script = ['signal-cli', '--dbus', 'send', str(number), '-m', message]
+    def send_message(self, state, message):
+        script = []
+        if state.is_user:
+            log('send_message user', state.toNumber, message)
+            script = ['signal-cli', '--dbus', 'send', str(state.toNumber), '-m', message]
+        elif state.is_group:
+            log('send_message group', state.groupId, message)
+            script = ['signal-cli', '--dbus', 'send', '-g', str(state.groupId), '-m', message]
+        else:
+            log('ERR: send_message inconsistent state')
+            return
         popen = execute_popen(script)
         for line in execute(popen):
             #log('queue event')
