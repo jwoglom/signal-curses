@@ -154,6 +154,16 @@ class MessagesLine(npyscreen.MultiLine):
 
         #self.update()
 
+    def _mark_value_read(self, value):
+        value[2] += ' (read)'
+        return value
+
+    def markRead(self, value):
+        for i in range(len(self._real_values)):
+            if self._real_values[i] == value:
+                self._real_values[i] = self._mark_value_read(value)
+
+
 class AppMessageBox(npyscreen.TitleText):
     def __init__(self, *args, **kwargs):
         super(AppMessageBox, self).__init__(*args, **kwargs)
@@ -402,6 +412,10 @@ class SignalApp(npyscreen.StandardApp):
             gen_line
         ])
 
+    def markReadEnvelope(self, env):
+        gen_line = env.gen_line()
+        self.app.wMain.markRead(gen_line)
+
     def onInMainLoop(self):
         log('mloop forms', self._Forms)
         
@@ -438,17 +452,27 @@ class SignalApp(npyscreen.StandardApp):
         env = Envelope.load(data, self)
         self.envelopes.append(env)
 
-        if self.state.shouldDisplayEnvelope(env):
-            self.addEnvelope(env)
-        elif self.state.shouldNotifyEnvelope(env):
-            log('notifying line')
-            gen_line = env.gen_line()
-            txt = '{}:\n\n{}'.format(gen_line[0], gen_line[2])
-            if env.group:
-                txt = 'Group: {}\n'.format(json.dumps(env.group)) + txt
-            npyscreen.notify_wait(txt, title='New Message from {}'.format(gen_line[1]))
-        else:
-            log('not displaying or notifying')
+        if env.dataMessage.is_message():
+            if self.state.shouldDisplayEnvelope(env):
+                self.addEnvelope(env)
+            elif self.state.shouldNotifyEnvelope(env):
+                log('notifying line')
+                gen_line = env.gen_line()
+                txt = '{}:\n\n{}'.format(gen_line[0], gen_line[2])
+                if env.group:
+                    txt = 'Group: {}\n'.format(json.dumps(env.group)) + txt
+                npyscreen.notify_wait(txt, title='New Message from {}'.format(gen_line[1]))
+            else:
+                log('not displaying or notifying dataMessage')
+
+        if env.syncMessage.is_read_message():
+            log('is read message', env.syncMessage)
+            for e in self.envelopes[:-1]:
+                if env.syncMessage.sync_read_matches(e):
+                    log('mark_read', e)
+                    self.markReadEnvelope(e)
+
+
 
     def handleMessageLine(self, line):
         self.messageLines.append(line)
@@ -510,6 +534,9 @@ class Envelope(object):
             return (self.format_ts(), '{} ({})'.format(self.sourceName, self.source), self.dataMessage.gen_line())
         return (self.format_ts(), '{}'.format(self.source), self.dataMessage.gen_line())
 
+    def __str__(self):
+        return ';'.join(self.gen_line())
+
 
 class DataMessage(object):
     timestamp = None
@@ -543,10 +570,38 @@ class DataMessage(object):
 
 
 class SyncMessage(object):
+    _data = None
+    sentMessage = None
+    blockedNumbers = None
+    readMessages = None
 
     @staticmethod
     def load(data):
-        pass # stub
+        self = SyncMessage()
+        self._data = data
+        if data:
+            self.sentMessage = data.get('sentMessage')
+            self.blockedNumbers = data.get('blockedNumbers')
+            self.readMessages = data.get('readMessages')
+        return self
+
+    def is_read_message(self):
+        return self.readMessages and len(self.readMessages) > 0
+
+    def sync_read_matches(self, env):
+        ret = False
+        for msg in self.readMessages:
+            if env and env.dataMessage.is_message():
+                log('dm: ts=', env.dataMessage.timestamp, 'source=', env.source)
+                log('msg: ts=', msg.get('timestamp'), 'sender=', msg.get('sender'))
+                ret = ret or ((env.dataMessage.timestamp == msg.get('timestamp')) and
+                              (env.source == msg.get('sender')))
+
+        return ret
+
+
+    def __str__(self):
+        return json.dumps(self._data)
 
 class CallMessage(object):
 
