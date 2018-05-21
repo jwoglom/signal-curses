@@ -6,9 +6,12 @@ import re
 import pathlib
 import json
 import os
+import time
 import argparse
+import pydbus
+from gi.repository import GLib
 from signal import signal as py_signal
-from signal import SIGINT
+from signal import SIGINT, default_int_handler
 from queue import Queue
 from datetime import datetime
 
@@ -39,6 +42,34 @@ def execute(popen):
     return_code = popen.wait()
     if return_code:
         raise subprocess.CalledProcessError(return_code, None)
+
+def exception_waitloop(fn, ex, sec, name=None):
+    try:
+        ret = fn()
+    except ex as er:
+        try:
+            if name:
+                print('Waiting for '+str(name), end='')
+            for _ in range(sec):
+                try:
+                    ret = fn()
+                except ex:
+                    if name:
+                        print('.', end='')
+                        sys.stdout.flush()
+                    time.sleep(1)
+                    continue
+                else:
+                    break
+            else:
+                if name:
+                    print('Giving up!')
+                return False
+        except KeyboardInterrupt:
+            if name:
+                print('')
+            sys.exit(1)
+    return ret
 
 class MainForm(npyscreen.Popup):
     def create(self):
@@ -263,6 +294,7 @@ class AppState(object):
 
     configDir = None
     phone = None
+    bus = None
 
     def __str__(self):
         return 'state type: {} name: {} numbers: {}'.format(self.convType, self.toName, ', '.join(self.numbers))
@@ -312,6 +344,7 @@ class AppState(object):
     def loadArgs(self, args):
         self.phone = args.phone
         self.configDir = args.configDir
+        self.bus = args.bus
 
     def shouldDisplayLine(self, lineState):
         if lineState.hasGroupInfo and lineState.groupId == self.groupId:
@@ -326,6 +359,7 @@ class SignalApp(npyscreen.StandardApp):
     app = None
     daemonThread = None
     daemonPopen = None
+    busThread = None
     messageThread = None
     message_queue = Queue()
     raw_lines = []
@@ -382,6 +416,9 @@ class SignalApp(npyscreen.StandardApp):
         log('main', self.app)
         self.daemonThread = SignalDaemonThread(self)
         self.daemonThread.start()
+
+        self.busThread = SignalBusThread(self)
+        self.busThread.start()
 
         self.messageThread = SignalMessageThread(self, self.message_queue)
         self.messageThread.start()
@@ -520,8 +557,8 @@ class LineState(object):
 
 
 class SignalDaemonThread(threading.Thread):
-    app = None
     daemon = False
+    app = None
     def __init__(self, app):
         super(SignalDaemonThread, self).__init__()
         self.app = app
@@ -540,13 +577,49 @@ class SignalDaemonThread(threading.Thread):
                 out_file.write(line)
                 out_file.flush()
                 out_file_lock.release()
-
+                log('line:', line)
                 self.app.handleDaemonLine(line)
                 self.app.queue_event(npyscreen.Event("RELOAD"))
         except subprocess.CalledProcessError as e:
             if not self.app.isShuttingDown:
-                raise e
+                log('EXCEPTION in daemon', e)
         log('daemon exit')
+
+
+class SignalBusThread(threading.Thread):
+    daemon = False
+    app = None
+    bus = None
+    def __init__(self, app):
+        super(SignalBusThread, self).__init__()
+        self.app = app
+
+    def get_message_bus(self):
+        return self.bus.get('org.asamk.Signal')
+
+    def receive(self, timestamp, source, groupID, message, attachments):
+        log('RCV', timestamp, source, groupID, message, attachments)
+
+    def run(self):
+        log('daemon thread')
+        state = self.app.state
+
+        loop = GLib.MainLoop()
+
+        if state.bus == 'system':
+            self.bus = pydbus.SystemBus()
+        else:
+            self.bus = pydbus.SessionBus()
+
+        self.signal = exception_waitloop(self.get_message_bus, GLib.Error, 100)
+        if not self.signal:
+            npyscreen.notify_wait('Unable to get signal {} bus'.format(state.bus), title='Error in SignalDaemonThread')
+
+        self.signal.onMessageReceived = self.receive
+        loop.run()
+
+
+
 
 class SignalMessageThread(threading.Thread):
     app = None
@@ -609,6 +682,7 @@ class SignalConfigData(object):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Curses interface for Signal')
     parser.add_argument('-u', dest='phone', help='Your phone number', required=True)
+    parser.add_argument('--bus', dest='bus', help='DBus session type (default: session)', default='session', choices=['session', 'system'])
     parser.add_argument('-c', dest='configDir', help='Config folder', default='{}/.config/signal'.format(pathlib.Path.home()))
 
     args = parser.parse_args()
@@ -616,6 +690,7 @@ if __name__ == '__main__':
 
     signal = SignalApp(options=args)
     py_signal(SIGINT, signal.sigint_handler)
+    #py_signal(SIGINT, default_int_handler)
     signal.run()
 
     #print(npyscreen.wrapper_basic(formFunc))
