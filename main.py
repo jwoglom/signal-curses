@@ -352,8 +352,14 @@ class AppState(object):
 
         return lineState.fromNumber == self.toNumber
 
+    def shouldDisplayEnvelope(self, env):
+        return env.should_display(self.toNumber, self.phone)
+
     def shouldNotifyLine(self, lineState):
         return lineState.fromNumber != self.phone
+
+    def shouldNotifyEnvelope(self, env):
+        return env.should_notify(self.toNumber, self.phone)
 
 class SignalApp(npyscreen.StandardApp):
     app = None
@@ -368,6 +374,7 @@ class SignalApp(npyscreen.StandardApp):
     state = None
     isShuttingDown = False
     lines = []
+    envelopes = []
 
     configData = None
 
@@ -409,6 +416,12 @@ class SignalApp(npyscreen.StandardApp):
             gen_line
         ])
 
+    def addEnvelope(self, env):
+        gen_line = env.gen_line()
+        self.app.wMain.addDatedValues([
+            gen_line
+        ])
+
     def onInMainLoop(self):
         log('mloop forms', self._Forms)
         
@@ -429,8 +442,7 @@ class SignalApp(npyscreen.StandardApp):
         })
 
     def killDaemon(self):
-        self.daemonPopen.kill()
-        self.daemonPopen.terminate()
+        self.daemonPopen.send_signal(SIGINT)
 
     def handleExit(self):
         self.isShuttingDown = True
@@ -445,6 +457,25 @@ class SignalApp(npyscreen.StandardApp):
     def handleDaemonLine(self, line):
         self.raw_lines.append(line)
         log('handleDaemonLine', line)
+        data = json.loads(line)
+        env = Envelope.load(data, self)
+        self.envelopes.append(env)
+
+        if self.state.shouldDisplayEnvelope(env):
+            self.addEnvelope(env)
+        elif self.state.shouldNotifyEnvelope(env):
+            log('notifying line')
+            gen_line = env.gen_line()
+            txt = '{}:\n\n{}'.format(gen_line[0], gen_line[2])
+            if env.group:
+                txt = 'Group: {}\n'.format(self.lineState.groupName) + txt
+            npyscreen.notify_wait(txt, title='New Message from {}'.format(gen_line[1]))
+        else:
+            log('not displaying or notifying')
+
+
+
+    def old_handleDaemonLine(self, line):
         regexes = {
             'init': r'Envelope from: \“([\w\d\s]*)\” (\+\d+) \(device: (\d+)\)',
             'timestamp': r'Timestamp: (\d+) \((.*)\)',
@@ -555,6 +586,106 @@ class LineState(object):
         return "name: {} num: {} ts: {} body: {}".format(
             self.fromName, self.fromNumber, self.timestamp, self.messageBody)
 
+class Envelope(object):
+    app = None
+
+    source = None
+    sourceDevice = None
+    relay = None
+    timestamp = None
+    isReceipt = None
+    dataMessage = None
+    syncMessage = None
+    callMessage = None
+
+    @staticmethod
+    def load(data, app):
+        self = Envelope()
+        self.app = app
+        e = data['envelope']
+        self.source = e.get('source')
+        self.sourceDevice = e.get('sourceDevice')
+        self.relay = e.get('relay')
+        self.timestamp = e.get('timestamp')
+        self.isReceipt = e.get('isReceipt')
+        self.dataMessage = DataMessage.load(e.get('dataMessage'))
+        self.syncMessage = SyncMessage.load(e.get('syncMessage'))
+        self.callMessage = CallMessage.load(e.get('callMessage'))
+        return self
+
+    def should_display(self, toNumber, phone):
+        return (self.source == toNumber) and self.dataMessage.should_display()
+
+    def should_notify(self, toNumber, phone):
+        # fromNumber != phone
+        log('should_notify', toNumber, phone, self.source, self.dataMessage.should_display())
+        return (self.source != toNumber) and self.dataMessage.should_notify()
+
+    def lookup_number(self, number):
+        contacts = self.app.configData.contacts
+        return next(i for i in contacts if i['number'] == number)
+
+    @property
+    def sourceName(self):
+        contact = self.lookup_number(self.source)
+        return contact['name'] if contact else None
+
+    @property
+    def group(self):
+        return self.dataMessage.groupInfo
+
+    def format_ts(self):
+        return str(datetime.fromtimestamp(int(self.timestamp)/1000))[:19]
+
+    def gen_line(self):
+        if self.sourceName:
+            return (self.format_ts(), '{} ({})'.format(self.sourceName, self.source), self.dataMessage.gen_line())
+        return (self.format_ts(), '{}'.format(self.source), self.dataMessage.gen_line())
+
+
+class DataMessage(object):
+    timestamp = None
+    message = None
+    expiresInSeconds = None
+    attachments = None
+    groupInfo = None
+
+    @staticmethod
+    def load(data):
+        self = DataMessage()
+        if data:
+            self.timestamp = data.get('timestamp')
+            self.message = data.get('message')
+            self.expiresInSeconds = data.get('expiresInSeconds')
+            self.attachments = data.get('attachments')
+            self.groupInfo = data.get('groupInfo')
+        return self
+
+    def is_message(self):
+        return self.timestamp and self.message
+
+    def should_display(self):
+        return self.is_message()
+
+    def should_notify(self):
+        return self.is_message()
+
+    def gen_line(self):
+        return self.message
+
+
+class SyncMessage(object):
+
+    @staticmethod
+    def load(data):
+        pass # stub
+
+class CallMessage(object):
+
+    @staticmethod
+    def load(data):
+        pass # stub
+
 
 class SignalDaemonThread(threading.Thread):
     daemon = False
@@ -565,12 +696,14 @@ class SignalDaemonThread(threading.Thread):
 
     def run(self):
         log('daemon thread')
+
         state = self.app.state
-        script = ['signal-cli', '-u', state.phone, 'daemon']
+        script = ['signal-cli', '-u', state.phone, 'daemon', '--json']
         #script = ['python3', 'sp.py']
         try:
             popen = execute_popen(script)
             self.app.daemonPopen = popen
+            log('daemon popen')
             for line in execute(popen):
                 #log('queue event')
                 out_file_lock.acquire()
@@ -601,8 +734,9 @@ class SignalBusThread(threading.Thread):
         log('RCV', timestamp, source, groupID, message, attachments)
 
     def run(self):
-        log('daemon thread')
+        log('bus thread')
         state = self.app.state
+        return
 
         loop = GLib.MainLoop()
 
@@ -611,10 +745,12 @@ class SignalBusThread(threading.Thread):
         else:
             self.bus = pydbus.SessionBus()
 
+        log('waiting for dbus...')
         self.signal = exception_waitloop(self.get_message_bus, GLib.Error, 100)
         if not self.signal:
+            log('dbus err')
             npyscreen.notify_wait('Unable to get signal {} bus'.format(state.bus), title='Error in SignalDaemonThread')
-
+        log('got dbus')
         self.signal.onMessageReceived = self.receive
         loop.run()
 
@@ -656,10 +792,13 @@ class SignalMessageThread(threading.Thread):
             log('ERR: send_message inconsistent state')
             return
         popen = execute_popen(script)
-        for line in execute(popen):
-            #log('queue event')
-            self.app.handleMessageLine(line)
-            self.app.queue_event(npyscreen.Event("RELOAD"))
+        try:
+            for line in execute(popen):
+                #log('queue event')
+                self.app.handleMessageLine(line)
+                self.app.queue_event(npyscreen.Event("RELOAD"))
+        except subprocess.CalledProcessError as e:
+            log('EXCEPTION in message thread', e)
 
         log('send_message done')
 
