@@ -328,6 +328,8 @@ class SelectForm(npyscreen.Form):
 
 
 class AppState(object):
+    startup_time = None
+
     convType = None
     USER = 'user'
     GROUP = 'group'
@@ -338,6 +340,9 @@ class AppState(object):
     configDir = None
     phone = None
     bus = None
+
+    def __init__(self):
+        self.startup_time = time.time()
 
     def __str__(self):
         return 'state type: {} name: {} numbers: {}'.format(self.convType, self.toName, ', '.join(self.numbers))
@@ -512,6 +517,10 @@ class SignalApp(npyscreen.StandardApp):
     def handleEnvelope(self, env):
         self.envelopes.append(env)
 
+        if env.timestamp and (time.time() - env.epoch_ts) >= 60:
+            log('ignoring envelope due to time difference of', str((time.time() - env.epoch_ts)))
+            return
+
         if env.dataMessage.is_message():
             if self.state.shouldDisplayEnvelope(env):
                 self.addEnvelope(env)
@@ -609,8 +618,12 @@ class Envelope(object):
     def group(self):
         return self.dataMessage.groupInfo
 
+    @property
+    def epoch_ts(self):
+        return int(self.timestamp)/1000
+
     def format_ts(self):
-        return str(datetime.fromtimestamp(int(self.timestamp)/1000))[:19]
+        return str(datetime.fromtimestamp(self.epoch_ts))[:19]
 
     def gen_line(self):
         if self.sourceName:
