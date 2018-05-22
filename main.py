@@ -598,12 +598,12 @@ class Envelope(object):
         return self
 
     def should_display(self, toNumber, phone):
-        return (self.source == toNumber) and self.dataMessage.should_display()
+        return ((self.source == toNumber) or (self.source == phone)) and self.dataMessage.should_display()
 
     def should_notify(self, toNumber, phone):
         # fromNumber != phone
         log('should_notify', toNumber, phone, self.source, self.dataMessage.should_display())
-        return (self.source != toNumber) and self.dataMessage.should_notify()
+        return (self.source != toNumber) and (self.source != phone) and self.dataMessage.should_notify()
 
     def lookup_number(self, number):
         contacts = self.app.configData.contacts
