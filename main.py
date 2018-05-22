@@ -155,8 +155,7 @@ class MessagesLine(npyscreen.MultiLine):
         #self.update()
 
     def _mark_value_read(self, value):
-        value[2] += ' (read)'
-        return value
+        return (value[0], value[1], value[2] + ' (read)')
 
     def markRead(self, value):
         for i in range(len(self._real_values)):
@@ -179,8 +178,7 @@ class AppMessageBox(npyscreen.TitleText):
     def _handleEnter(self, inp):
         val = self.entry_widget.value
         log('handleEnter', inp, val)
-        self.parent.wMain.addValues([
-            (self._getSelfName(), val)])
+        self.parent.parentApp.generateSelfEnvelope(self._getSelfName(), val)
         self.parent.parentApp.queue_event(npyscreen.Event("SEND"))
         self.parent.parentApp.queue_event(npyscreen.Event("RELOAD"))
 
@@ -445,11 +443,28 @@ class SignalApp(npyscreen.StandardApp):
         self.handleExit()
         exit(0)
 
+    def generateSelfEnvelope(self, name, msg):
+        now = int(time.time() * 1000)
+        env = Envelope.load({"envelope": {
+            "timestamp": now,
+            "source": self.state.phone,
+            "dataMessage": {
+                "timestamp": now,
+                "message": msg
+            }
+        }}, self, Envelope.SELF)
+        self.handleEnvelope(env)
+        #self.parent.wMain.addValues([
+        #    (self._getSelfName(), val)])
+
     def handleDaemonLine(self, line):
         self.raw_lines.append(line)
         log('handleDaemonLine', line)
         data = json.loads(line)
-        env = Envelope.load(data, self)
+        env = Envelope.load(data, self, Envelope.NETWORK)
+        self.handleEnvelope(env)
+
+    def handleEnvelope(self, env):
         self.envelopes.append(env)
 
         if env.dataMessage.is_message():
@@ -480,6 +495,9 @@ class SignalApp(npyscreen.StandardApp):
 
 class Envelope(object):
     app = None
+    origin = None
+    NETWORK = 'NETWORK'
+    SELF = 'SELF'
 
     source = None
     sourceDevice = None
@@ -491,9 +509,10 @@ class Envelope(object):
     callMessage = None
 
     @staticmethod
-    def load(data, app):
+    def load(data, app, origin):
         self = Envelope()
         self.app = app
+        self.origin = origin
         e = data['envelope']
         self.source = e.get('source')
         self.sourceDevice = e.get('sourceDevice')
@@ -588,14 +607,18 @@ class SyncMessage(object):
     def is_read_message(self):
         return self.readMessages and len(self.readMessages) > 0
 
+
+    def _compare_ts(self, envTs, msgTs):
+        return abs(envTs - msgTs) < 1000
+
     def sync_read_matches(self, env):
         ret = False
         for msg in self.readMessages:
             if env and env.dataMessage.is_message():
                 log('dm: ts=', env.dataMessage.timestamp, 'source=', env.source)
                 log('msg: ts=', msg.get('timestamp'), 'sender=', msg.get('sender'))
-                ret = ret or ((env.dataMessage.timestamp == msg.get('timestamp')) and
-                              (env.source == msg.get('sender')))
+                ret = ret or ((env.source == msg.get('sender')) and
+                    self._compare_ts(env.dataMessage.timestamp, msg.get('timestamp')))
 
         return ret
 
@@ -653,7 +676,7 @@ class SignalMessageThread(threading.Thread):
         self.queue = queue
 
     def get_message_bus(self):
-        return pydbus.SessionBus().get('org.asamk.Signal')
+        return self.bus.get('org.asamk.Signal')
 
     def run(self):
         log('message thread')
@@ -667,7 +690,8 @@ class SignalMessageThread(threading.Thread):
         self.signal = exception_waitloop(self.get_message_bus, GLib.Error, 60)
         if not self.signal:
             log('dbus err')
-            npyscreen.notify_wait('Unable to get signal {} bus'.format(state.bus), title='Error in SignalDaemonThread')
+            npyscreen.notify_wait('Unable to get signal {} bus. Messaging functionality will not function.'.format(self.app.state.bus), title='Error in SignalDaemonThread')
+            exit(1)
         log('got dbus')
         # self.signal.onMessageReceived
 
