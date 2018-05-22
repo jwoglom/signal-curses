@@ -125,11 +125,28 @@ class MessagesLine(npyscreen.MultiLine):
             return [first_beg]
 
         text = val[2]
-        ret.append(first_beg + str(text[:self.width]))
+        ln = first_beg + str(text[:self.width])
+        if len(val) >= 4:
+            log('adding suffix:', val[3])
+            if (len(ln) + len(val[3])) <= (self.width + len(cont_beg)):
+                ln += (' ' * (self.width - len(ln) - len(val[3]) - 1)) + val[3]
+            else:
+                # force a new line
+                ln += (' ' * (self.width - len(ln) - 1))
+        ret.append(ln)
         text = text[self.width:]
         while len(text) > 0:
-            ret.append(cont_beg + str(text[:self.width]))
+            ln = cont_beg + str(text[:self.width])
             text = text[self.width:]
+            if len(val) >= 4:
+                log('adding suffix:', val[3])
+                if (len(ln) + len(val[3])) <= (self.width + len(cont_beg)):
+                    ln += (' ' * (self.width - len(ln) - len(val[3]) - 1)) + val[3]
+                else:
+                    # force a new line
+                    ln += (' ' * (self.width - len(ln) - 1))
+            ret.append(ln)
+        log('lines:', '\n'.join(ret))
         return ret
 
     def _gen_values(self):
@@ -154,13 +171,14 @@ class MessagesLine(npyscreen.MultiLine):
 
         #self.update()
 
-    def _mark_value_read(self, value):
-        return (value[0], value[1], value[2] + ' (read)')
+    def _mark_value_as(self, value, txt):
+        log('mark: ', value, 'as: ', txt)
+        return (value[0], value[1], value[2], txt)
 
-    def markRead(self, value):
+    def markAs(self, value, txt):
         for i in range(len(self._real_values)):
             if self._real_values[i] == value:
-                self._real_values[i] = self._mark_value_read(value)
+                self._real_values[i] = self._mark_value_as(value, txt)
 
 
 class AppMessageBox(npyscreen.TitleText):
@@ -412,7 +430,7 @@ class SignalApp(npyscreen.StandardApp):
 
     def markReadEnvelope(self, env):
         gen_line = env.gen_line()
-        self.app.wMain.markRead(gen_line)
+        self.app.wMain.markAs(gen_line, '(read)')
 
     def onInMainLoop(self):
         log('mloop forms', self._Forms)
