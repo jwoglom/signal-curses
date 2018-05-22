@@ -115,6 +115,7 @@ class MessagesLine(npyscreen.MultiLine):
         return self._gen_lines_full(val, self._size, self._size_max, self._date_size)
 
     def _gen_lines_full(self, val, size, size_max, date_size):
+        # (date, from, message, suffix)
         beg_fmt = '{:<'+str(date_size)+'}{:>'+str(size)+'}'
         if len(val) > 2:
             beg_fmt += ' | '
@@ -127,7 +128,7 @@ class MessagesLine(npyscreen.MultiLine):
         text = val[2]
         ln = first_beg + str(text[:self.width])
         if len(val) >= 4:
-            log('adding suffix:', val[3])
+            #log('adding suffix:', val[3])
             if (len(ln) + len(val[3])) <= (self.width + len(cont_beg)):
                 ln += (' ' * (self.width - len(ln) - len(val[3]) - 1)) + val[3]
             else:
@@ -139,14 +140,14 @@ class MessagesLine(npyscreen.MultiLine):
             ln = cont_beg + str(text[:self.width])
             text = text[self.width:]
             if len(val) >= 4:
-                log('adding suffix:', val[3])
+                #log('adding suffix:', val[3])
                 if (len(ln) + len(val[3])) <= (self.width + len(cont_beg)):
                     ln += (' ' * (self.width - len(ln) - len(val[3]) - 1)) + val[3]
                 else:
                     # force a new line
                     ln += (' ' * (self.width - len(ln) - 1))
             ret.append(ln)
-        log('lines:', '\n'.join(ret))
+        #log('lines:', '\n'.join(ret))
         return ret
 
     def _gen_values(self):
@@ -175,13 +176,26 @@ class MessagesLine(npyscreen.MultiLine):
         log('mark: ', value, 'as: ', txt)
         return (value[0], value[1], value[2], txt)
 
-    def markAs(self, value, txt):
+    def _mark_value_eq(self, a, b):
+        return (a[:3] == b[:3])
+
+    def markAs(self, value, suffix):
         for i in range(len(self._real_values)):
-            if self._real_values[i] == value:
-                self._real_values[i] = self._mark_value_as(value, txt)
+            if self._mark_value_eq(self._real_values[i], value):
+                log('markAs success:', value)
+                self._real_values[i] = self._mark_value_as(value, suffix)
+
+class CurrentSend(object):
+    timestamp = None
+    value = None
+
+    def __init__(self, timestamp, value):
+        self.timestamp = timestamp
+        self.value = value
 
 
 class AppMessageBox(npyscreen.TitleText):
+    currentSend = None
     def __init__(self, *args, **kwargs):
         super(AppMessageBox, self).__init__(*args, **kwargs)
         self.entry_widget.add_handlers({
@@ -194,9 +208,14 @@ class AppMessageBox(npyscreen.TitleText):
         return '{}'.format(self.parent.parentApp.state.phone)
 
     def _handleEnter(self, inp):
+        now = int(time.time() * 1000)
         val = self.entry_widget.value
-        log('handleEnter', inp, val)
-        self.parent.parentApp.generateSelfEnvelope(self._getSelfName(), val)
+        log('handleEnter', inp, val, now)
+        self.entry_widget.value = ''
+        self.entry_widget.clear()
+
+        self.currentSend = CurrentSend(now, val)
+        self.parent.parentApp.handleSelfEnvelope(now, self._getSelfName(), val)
         self.parent.parentApp.queue_event(npyscreen.Event("SEND"))
         self.parent.parentApp.queue_event(npyscreen.Event("RELOAD"))
 
@@ -225,14 +244,12 @@ class AppForm(npyscreen.FormMuttActiveTraditionalWithMenus):
         self.wMain.update()
 
     def sendHandler(self, event):
-        val = self.wCommand.entry_widget.value
-        log('sendHandler', val)
-        self.wCommand.entry_widget.value = ''
-        self.wCommand.entry_widget.clear()
+        cur = self.wCommand.currentSend
+        log('sendHandler', cur.value, cur.timestamp)
 
         self.parentApp.message_queue.put({
             'state': self.parentApp.state,
-            'message': val
+            'currentSend': cur
         })
         
     def whenSwitch(self, arg):
@@ -428,9 +445,11 @@ class SignalApp(npyscreen.StandardApp):
             gen_line
         ])
 
-    def markReadEnvelope(self, env):
+    def markAsEnvelope(self, env, suffix):
+        log('markAsEnvelope:', env, suffix)
         gen_line = env.gen_line()
-        self.app.wMain.markAs(gen_line, '(read)')
+        self.app.wMain.markAs(gen_line, suffix)
+        self.app.wMain.update()
 
     def onInMainLoop(self):
         log('mloop forms', self._Forms)
@@ -461,9 +480,8 @@ class SignalApp(npyscreen.StandardApp):
         self.handleExit()
         exit(0)
 
-    def generateSelfEnvelope(self, name, msg):
-        now = int(time.time() * 1000)
-        env = Envelope.load({"envelope": {
+    def generateSelfEnvelope(self, now, name, msg):
+        return Envelope.load({"envelope": {
             "timestamp": now,
             "source": self.state.phone,
             "dataMessage": {
@@ -471,7 +489,11 @@ class SignalApp(npyscreen.StandardApp):
                 "message": msg
             }
         }}, self, Envelope.SELF)
+
+    def handleSelfEnvelope(self, now, name, msg):
+        env = self.generateSelfEnvelope(now, name, msg)
         self.handleEnvelope(env)
+        self.markAsEnvelope(env, '(sending)')
         #self.parent.wMain.addValues([
         #    (self._getSelfName(), val)])
 
@@ -503,7 +525,7 @@ class SignalApp(npyscreen.StandardApp):
             for e in self.envelopes[:-1]:
                 if env.syncMessage.sync_read_matches(e):
                     log('mark_read', e)
-                    self.markReadEnvelope(e)
+                    self.markAsEnvelope(e, '(read)')
 
 
 
@@ -516,6 +538,7 @@ class Envelope(object):
     origin = None
     NETWORK = 'NETWORK'
     SELF = 'SELF'
+    _data = None
 
     source = None
     sourceDevice = None
@@ -530,6 +553,7 @@ class Envelope(object):
     def load(data, app, origin):
         self = Envelope()
         self.app = app
+        self._data = data
         self.origin = origin
         e = data['envelope']
         self.source = e.get('source')
@@ -572,7 +596,7 @@ class Envelope(object):
         return (self.format_ts(), '{}'.format(self.source), self.dataMessage.gen_line())
 
     def __str__(self):
-        return ';'.join(self.gen_line())
+        return json.dumps(self._data)
 
 
 class DataMessage(object):
@@ -722,10 +746,11 @@ class SignalMessageThread(threading.Thread):
             self.queue.task_done()
         log('message thread exit')
 
-    def do_action(self, state=None, message=None):
-        self.send_message(state, message)
+    def do_action(self, state=None, currentSend=None):
+        self.send_message(state, currentSend)
 
-    def send_message(self, state, message):
+    def send_message(self, state, currentSend):
+        message = currentSend.value
         script = []
         if state.is_user:
             log('send_message user', state.toNumber, message)
@@ -736,6 +761,10 @@ class SignalMessageThread(threading.Thread):
         else:
             log('ERR: send_message inconsistent state')
             return
+
+        env = self.app.generateSelfEnvelope(currentSend.timestamp, self.app.state.phone, message)
+        log('send_message env:', env)
+        self.app.markAsEnvelope(env, '(sent)')
 
         log('send_message done')
 
