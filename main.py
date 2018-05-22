@@ -11,7 +11,7 @@ import argparse
 import pydbus
 from gi.repository import GLib
 from signal import signal as py_signal
-from signal import SIGINT, default_int_handler
+from signal import SIGINT, SIGTERM
 from queue import Queue
 from datetime import datetime
 
@@ -472,11 +472,16 @@ class SignalApp(npyscreen.StandardApp):
 
     def handleExit(self):
         self.isShuttingDown = True
-        self.killMessageThread()
         self.killDaemon()
+        self.killMessageThread()
 
     def sigint_handler(self, sig, frame):
         log('SIGINT')
+        self.handleExit()
+        exit(0)
+
+    def sigterm_handler(self, sig, frame):
+        log('SIGTERM')
         self.handleExit()
         exit(0)
 
@@ -527,6 +532,23 @@ class SignalApp(npyscreen.StandardApp):
                     log('mark_read', e)
                     self.markAsEnvelope(e, '(read)')
 
+        if env.callMessage.is_offer():
+            self.app.wMain.addValues([
+                ('*', 'You are receiving an inbound call from {}'.format(env.source))
+            ])
+            npyscreen.notify_wait('You are receiving an inbound call', title='Call from {}'.format(env.source))
+
+        if env.callMessage.is_busy():
+            self.app.wMain.addValues([
+                ('*', 'The caller {} is busy'.format(env.source))
+            ])
+            npyscreen.notify_wait('The caller is busy', title='Call from {}'.format(env.source))
+
+        if env.callMessage.is_hangup():
+            self.app.wMain.addValues([
+                ('*', 'The caller {} hung up'.format(env.source))
+            ])
+            npyscreen.notify_wait('The caller hung up', title='Call from {}'.format(env.source))
 
 
     def handleMessageLine(self, line):
@@ -649,7 +671,6 @@ class SyncMessage(object):
     def is_read_message(self):
         return self.readMessages and len(self.readMessages) > 0
 
-
     def _compare_ts(self, envTs, msgTs):
         return abs(envTs - msgTs) < 1000
 
@@ -669,10 +690,31 @@ class SyncMessage(object):
         return json.dumps(self._data)
 
 class CallMessage(object):
+    _data = None
+    offerMessage = None
+    busyMessage = None
+    hangupMessage = None
+    iceUpdateMessages = None
 
     @staticmethod
     def load(data):
-        pass # stub
+        self = CallMessage()
+        self._data = data
+        if data:
+            self.offerMessage = data.get('offerMessage')
+            self.busyMessage = data.get('busyMessage')
+            self.hangupMessage = data.get('hangupMessage')
+            self.iceUpdateMessages = data.get('iceUpdateMessages')
+        return self
+
+    def is_offer(self):
+        return self.offerMessage
+
+    def is_busy(self):
+        return self.busyMessage
+
+    def is_hangup(self):
+        return self.hangupMessage
 
 
 class SignalDaemonThread(threading.Thread):
@@ -795,7 +837,5 @@ if __name__ == '__main__':
 
     signal = SignalApp(options=args)
     py_signal(SIGINT, signal.sigint_handler)
-    #py_signal(SIGINT, default_int_handler)
+    py_signal(SIGTERM, signal.sigterm_handler)
     signal.run()
-
-    #print(npyscreen.wrapper_basic(formFunc))
