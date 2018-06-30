@@ -963,15 +963,23 @@ class SignalConfigData(object):
             setup.run()
             exit(0)
         self.data = json.loads(f.read())
+
+        noContacts = (not self.data['contactStore'] and (not self.data['groupStore'] or not self.data['groupStore']['groups']))
+        if noContacts:
+            log('noContacts!')
         f.close()
 
     @property
     def groups(self):
-        return self.data['groupStore']['groups']
+        if self.data['groupStore'] and 'groups' in self.data['groupStore']:
+            return self.data['groupStore']['groups']
+        return []
 
     @property
     def contacts(self):
-        return self.data['contactStore']['contacts']
+        if self.data['contactStore'] and 'contacts' in self.data['contactStore']:
+            return self.data['contactStore']['contacts']
+        return []
 
 
 if __name__ == '__main__':
