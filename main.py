@@ -9,6 +9,9 @@ import os
 import time
 import argparse
 import pydbus
+import base64
+import pyqrcode
+import socket
 from gi.repository import GLib
 from signal import signal as py_signal
 from signal import SIGINT, SIGTERM
@@ -812,7 +815,9 @@ class SignalMessageThread(threading.Thread):
             self.signal.sendMessage(message, [], [str(state.toNumber)])
         elif state.is_group:
             log('send_message group', state.groupId, message)
-            self.signal.sendGroupMessage(message, [], str(state.groupId))
+            b64 = base64.b64encode(state.groupId.encode())
+            log('group id:', state.groupId, ' b64:', b64)
+            self.signal.sendGroupMessage(message, [], b64)
         else:
             log('ERR: send_message inconsistent state')
             return
@@ -823,10 +828,140 @@ class SignalMessageThread(threading.Thread):
 
         log('send_message done')
 
+class Setup(object):
+    token = None
+    tokenQR = None
+    showingToken = False
+    response = None
+
+class SetupLinkDaemonThread(threading.Thread):
+    daemon = False
+    app = None
+    def __init__(self, app):
+        super(SetupLinkDaemonThread, self).__init__()
+        self.app = app
+
+    def run(self):
+        log('link daemon thread')
+
+        state = self.app.state
+        script = ['signal-cli', 'link', '-n{} on {}'.format('signal-curses', socket.gethostname())]
+        try:
+            popen = execute_popen(script)
+            self.app.daemonPopen = popen
+            log('link daemon popen')
+            for line in execute(popen):
+                #log('queue event')
+                """out_file_lock.acquire()
+                out_file.write(line)
+                out_file.flush()
+                out_file_lock.release()"""
+                log('link line:', line)
+                if len(line) > 0:
+                    self.app.sendLinkLine(line)
+        except subprocess.CalledProcessError as e:
+            if not self.app.isShuttingDown:
+                log('EXCEPTION in daemon', e)
+        log('daemon exit')
+
+class SetupLinkPromptForm(npyscreen.Form):
+    def create(self):
+        self.prompt()
+
+    def prompt(self):
+        state = self.parentApp.state
+        self.parentApp.setNextForm('LINK')
+        npyscreen.notify_confirm("Couldn't open your signal config file for:\nPhone: {}\nConfig dir: {}".format(state.phone, state.configDir) +
+                                 "\nDo you want to link a new device right now? Hit Tab-Enter to continue, or Ctrl+C", title="No signal-cli config")
+
+class SetupLinkForm(npyscreen.Form):
+    def create(self):
+        self.parentApp.startLinkDaemon()
+        self.showQR()
+
+    def getQR(self):
+        if not self.parentApp.setup.showingToken:
+            return
+        while self.parentApp.setup.token is None:
+            npyscreen.notify_wait("Waiting for token...", title="Setup")
+            time.sleep(1)
+        return pyqrcode.create(self.parentApp.setup.token).terminal(quiet_zone=1)
+
+    def getResponse(self):
+        while self.parentApp.setup.response is None:
+            time.sleep(1)
+        return self.parentApp.setup.response
+
+    def showQR(self):
+        state = self.parentApp.state
+        self.parentApp.setup.showingToken = True
+        self.parentApp.tokenQR = self.getQR()
+        self.parentApp.setup.showingToken = False
+        npyscreen.blank_terminal()
+        print("QR Code:")
+        for line in self.parentApp.tokenQR.splitlines():
+            print(line)
+            print("\r", end='')
+        print("")
+        print("In the Signal app, scan this QR code in Settings > Linked Devices.\r")
+        npyscreen.notify_confirm(self.getResponse(), title="Restart signal-curses to begin chatting")
+        exit(0)
+
+
+
+class SetupApp(npyscreen.NPSAppManaged):
+    state = None
+    setup = None
+
+    def __init__(self, state, *args, **kwargs):
+        self.state = state
+        self.setup = Setup()
+        super(SetupApp, self).__init__(*args, **kwargs)
+
+    def sendLinkLine(self, line):
+        if not self.setup.token:
+            token = line.strip()
+            log('GOT TOKEN:', token)
+            self.setup.token = token
+        else:
+            log('AFTER:', line)
+            if not self.setup.response:
+                self.setup.response = line
+            else:
+                self.setup.response += '\n' + line
+
+    def startLinkDaemon(self):
+        self.linkDaemon = SetupLinkDaemonThread(self)
+        self.linkDaemon.start()
+
+    def onStart(self):
+        self.addForm("MAIN", SetupLinkPromptForm, name='SetupLinkPrompt')
+        self.addForm("LINK", SetupLinkForm, name='SetupLinkForm')
+        self.promptForm = self.getForm('MAIN')
+        self.linkForm = self.getForm('LINK')
+
+    def run(self, *args, **kwargs):
+        super(SetupApp, self).run(*args, **kwargs)
+
+    def onCleanExit(self):
+        print("QR code:")
+        print(self.setup.tokenQR)
+
 class SignalConfigData(object):
     data = None
     def __init__(self, state):
-        f = open('{}/data/{}'.format(state.configDir, state.phone), 'r')
+        phoneDir = '{}/data'.format(state.configDir)
+        noConfig = False
+        try:
+            f = open('{}/{}'.format(phoneDir, state.phone), 'r')
+        except FileNotFoundError as e:
+            log('ERR: config load', e)
+            noConfig = True
+
+        if noConfig:
+            setup = SetupApp(state)
+            setup.run()
+            exit(0)
         self.data = json.loads(f.read())
         f.close()
 
