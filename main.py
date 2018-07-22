@@ -19,7 +19,6 @@ from queue import Queue
 from datetime import datetime
 
 CURSES_OTHER_ENTER = 10
-from secret import SELF_PHONE, TO_PHONE
 
 log_file = open('sc.log', 'w')
 log_file_lock = threading.Lock()
@@ -614,6 +613,8 @@ class Envelope(object):
 
     @property
     def sourceName(self):
+        if self.source == self.app.state.phone:
+            return 'You'
         contact = self.lookup_number(self.source)
         return contact['name'] if contact else None
 
