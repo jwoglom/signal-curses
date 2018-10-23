@@ -3,7 +3,8 @@ Curses-backed terminal interface for [Signal](https://signal.org) using [signal-
 
 Setup
 =====
-* Install [signal-cli](https://github.com/AsamK/signal-cli) (see [Installation](https://github.com/AsamK/signal-cli/blob/master/README.md)) and [libunixsocket-java](https://packages.debian.org/libunixsocket-java) (see [DBus service](https://github.com/AsamK/signal-cli/wiki/DBus-service))
+* Build and install [signal-cli](https://github.com/AsamK/signal-cli) from source (see [Installation](https://github.com/AsamK/signal-cli/blob/master/README.md#building))
+* Install [libunixsocket-java](https://packages.debian.org/libunixsocket-java) (see [DBus service](https://github.com/AsamK/signal-cli/wiki/DBus-service))
 * Install [pydbus](https://github.com/LEW21/pydbus) dependencies, if needed (see [Requirements](https://github.com/LEW21/pydbus/blob/master/README.rst))
 * Install python deps with ```pip install -r requirements.txt```
 * Run with ```python3 main.py -u '+12345678901'```
