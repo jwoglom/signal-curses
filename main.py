@@ -23,6 +23,7 @@ import re
 import pathlib
 import json
 import os
+import sys
 import time
 import argparse
 import pydbus
@@ -65,7 +66,7 @@ def execute(popen):
 def exception_waitloop(fn, ex, sec, name=None):
     try:
         ret = fn()
-    except ex as er:
+    except ex as _:
         try:
             if name:
                 print('Waiting for '+str(name), end='')
@@ -89,18 +90,6 @@ def exception_waitloop(fn, ex, sec, name=None):
                 print('')
             sys.exit(1)
     return ret
-
-class MainForm(npyscreen.Popup):
-    def create(self):
-        self.to = self.add(npyscreen.TitleSelectOne, max_height=3,
-            name='To:',
-            values=['Bob Smith', 'John Doe', 'Jane Doe', 'Todd Smith'],
-            scroll_exit=True)
-        self.msg = self.add(npyscreen.TitleText, name='Message:')
-
-    def afterEditing(self):
-        print('after editing', self.to.value, self.msg.value)
-        self.parentApp.setNextForm('DONE')
 
 class MessagesLine(npyscreen.MultiLine):
     _size = 15
@@ -246,6 +235,7 @@ class AppForm(npyscreen.FormMuttActiveTraditionalWithMenus):
     MAIN_WIDGET_CLASS = MessagesLine
 
     def create(self):
+        log('appForm creating')
         self.m1 = self.add_menu(name="Main Menu", shortcut="^X")
         self.m1.addItemsFromList([
             ("Switch", self.whenSwitch, None, None, ("blah",)),
@@ -256,6 +246,7 @@ class AppForm(npyscreen.FormMuttActiveTraditionalWithMenus):
         self.add_event_hander("SEND", self.sendHandler)
 
         super(AppForm, self).create()
+        log('appForm created')
 
     def reloadHandler(self, event):
         #log('reloadHandler')
@@ -307,6 +298,7 @@ class SelectFormTree(npyscreen.MLTree):
 class SelectForm(npyscreen.Form):
     tree = None
     def create(self):
+        log('selectForm create')
         super(SelectForm, self).create()
         self.tree = self.add(SelectFormTree)
         
@@ -323,6 +315,7 @@ class SelectForm(npyscreen.Form):
             gobj.new_child(content='{} ({})'.format(g['name'], ', '.join(g['members'])))
 
         self.tree.values = td
+        log('selectForm done')
 
     def getFromId(self, tree_id):
         contacts = self.parentApp.configData.contacts
@@ -450,18 +443,13 @@ class SignalApp(npyscreen.StandardApp):
         self.addForm('APP', AppForm, name='Application')
         log('start forms', self._Forms)
         self.app = self.getForm('APP')
+        log('app is defined')
 
     def updateState(self, selected, is_group):
         self.state.load(selected, is_group)
         log('new state:', self.state)
 
-        self.loadDisplayLines()
         self.app.updateState()
-
-    def loadDisplayLines(self):
-        for line in self.lines:
-            if self.state.shouldDisplayLine(line):
-                self.addLine(line)
 
     def addEnvelope(self, env):
         gen_line = env.gen_line()
@@ -769,7 +757,6 @@ class SignalDaemonThread(threading.Thread):
             self.app.daemonPopen = popen
             log('daemon popen')
             for line in execute(popen):
-                #log('queue event')
                 out_file_lock.acquire()
                 out_file.write(line)
                 out_file.flush()
@@ -999,12 +986,12 @@ class SignalConfigData(object):
             return self.data['contactStore']['contacts']
         return []
 
-
+CONFIG_FOLDER = '.local/share/signal-cli'
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Curses interface for Signal')
     parser.add_argument('-u', dest='phone', help='Your phone number', required=True)
     parser.add_argument('--bus', dest='bus', help='DBus session type (default: session)', default='session', choices=['session', 'system'])
-    parser.add_argument('-c', dest='configDir', help='Config folder', default='{}/.config/signal'.format(pathlib.Path.home()))
+    parser.add_argument('-c', dest='configDir', help='Config folder', default='{}/{}'.format(pathlib.Path.home(), CONFIG_FOLDER))
 
     args = parser.parse_args()
     log('args', args)
