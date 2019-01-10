@@ -1,4 +1,4 @@
 # npyscreen
-git://github.com/npcole/npyscreen@b032562a7dbedbe3a273b443a8303d3f57e7ac89#egg=npyscreen
+git+git://github.com/npcole/npyscreen@b032562a7dbedbe3a273b443a8303d3f57e7ac89#egg=npyscreen
 pydbus
 pyqrcode
