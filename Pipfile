@@ -1,0 +1,19 @@
+[[source]]
+name = "pypi"
+url = "https://pypi.org/simple"
+verify_ssl = true
+
+[dev-packages]
+
+[packages]
+npyscreen = {git = "git://github.com/jwoglom/npyscreen",ref = "d01ce55df23ff1596ff874f20b85a1270f42b015"}
+pydbus = "*"
+vext = "*"
+"vext.gi" = "*"
+pyqrcode = "*"
+
+[requires]
+python_version = "3.6"
+
+[pipenv]
+allow_prereleases = true
