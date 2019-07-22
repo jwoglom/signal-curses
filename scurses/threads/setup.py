@@ -36,7 +36,7 @@ class SetupLinkDaemonThread(threading.Thread):
         log('link daemon thread')
 
         state = self.app.state
-        script = ['echo', 'signal-cli', 'link',
+        script = ['signal-cli', 'link',
                   '-n{} on {}'.format('signal-curses', socket.gethostname())]
         try:
             popen = scurses.utils.processes.execute_popen(script)

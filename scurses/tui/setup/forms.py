@@ -30,7 +30,7 @@ class SetupLinkPromptForm(npyscreen.Form):
         state = self.parentApp.state
         self.parentApp.setNextForm('LINK')
         npyscreen.notify_confirm("Couldn't open your signal config file for:\nPhone: {}\nConfig dir: {}".format(state.phone, state.configDir) +
-                                 "\nDo you want to link a new device right now? Hit Tab-Enter to continue, or Ctrl+C", title="No signal-cli config")
+                                 "\nDo you want to link a new device right now? Hit enter twice to select the OK button. To cancel, press Ctrl+C", title="No signal-cli config")
 
 
 class SetupLinkForm(npyscreen.Form):
@@ -42,9 +42,14 @@ class SetupLinkForm(npyscreen.Form):
         if not self.parentApp.setup.showingToken:
             return
         while self.parentApp.setup.token is None:
-            npyscreen.notify_wait("Waiting for token...", title="Setup")
-            time.sleep(1)
-        return pyqrcode.create(self.parentApp.setup.token, error='L').terminal(quiet_zone=0)
+            npyscreen.notify_wait(
+                "Waiting for token...\n\nOpen Signal > Settings > Linked Devices > Add and scan the QR code.", title="Setup")
+            time.sleep(0.1)
+        if not self.parentApp.setup.token.startswith('tsdevice:'):
+            npyscreen.notify_confirm(
+            "There was not a valid registration token returned from signal-cli\n\nReturned token: {}".format(self.parentApp.setup.token), title="Setup")
+            exit(0)
+        return pyqrcode.create(self.parentApp.setup.token, error='L').terminal(quiet_zone=1)
 
     def getResponse(self):
         while self.parentApp.setup.response is None:
@@ -57,12 +62,12 @@ class SetupLinkForm(npyscreen.Form):
         self.parentApp.tokenQR = self.getQR()
         self.parentApp.setup.showingToken = False
         npyscreen.blank_terminal()
-        print("QR Code:")
+        print("\r")
         for line in self.parentApp.tokenQR.splitlines():
             print(line)
             print("\r", end='')
         print("")
-        print("In the Signal app, scan this QR code in Settings > Linked Devices.\r")
+        print("Open Signal > Settings > Linked Devices > Add and scan the QR code.\r")
         npyscreen.notify_confirm(
             self.getResponse(), title="Restart signal-curses to begin chatting")
         exit(0)
