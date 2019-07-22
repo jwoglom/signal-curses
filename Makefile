@@ -1,5 +1,13 @@
 SIGNALCLI_VERSION=0.6.2
 
+java:
+ifeq (, $(shell which java))
+	$(warning java not installed)
+	sudo apt-get install default-jre
+else
+	$(warning java installed)
+endif
+
 signal-cli:
 ifeq (, $(shell which signal-cli))
 	$(warning signal-cli is not in PATH, adding to /usr/local/bin)
@@ -39,5 +47,5 @@ pipenv:
 	$(warning installing pipenv)	
 	pipenv install
 
-install: signal-cli libunixsocket-java python-gobject pkg-config pipenv
+install: java signal-cli libunixsocket-java python-gobject pkg-config pipenv
 

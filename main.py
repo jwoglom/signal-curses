@@ -16,23 +16,22 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 import argparse
-import pathlib
 import scurses
+from scurses.utils.paths import default_config_dir
+import scurses.launcher
 
-from signal import signal as py_signal
-from signal import SIGINT, SIGTERM
 
 CONFIG_FOLDER = '.local/share/signal-cli'
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Curses interface for Signal')
-    parser.add_argument('-u', dest='phone', help='Your phone number', required=True)
-    parser.add_argument('--bus', dest='bus', help='DBus session type (default: session)', default='session', choices=['session', 'system'])
-    parser.add_argument('-c', dest='configDir', help='Config folder', default='{}/{}'.format(pathlib.Path.home(), CONFIG_FOLDER))
+    parser.add_argument('-u', dest='phone',
+                        help='Your phone number', required=True)
+    parser.add_argument('--bus', dest='bus', help='DBus session type (default: session)',
+                        default='session', choices=['session', 'system'])
+    parser.add_argument('-c', dest='configDir', help='Config folder (default: {})'.format(default_config_dir()),
+                        default=default_config_dir())
 
     args = parser.parse_args()
     scurses.log('args', args)
 
-    signal = scurses.SignalApp(options=args)
-    py_signal(SIGINT, signal.sigint_handler)
-    py_signal(SIGTERM, signal.sigterm_handler)
-    signal.run()
+    scurses.launcher.run(args)
